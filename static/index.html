@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Annotation — Mask Segmentation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #141414;
+    --surface: #1e1e1e;
+    --panel: #252525;
+    --border: #333;
+    --accent: #4f9cf9;
+    --accent-hover: #6aaeff;
+    --fg-color: #22c55e;
+    --text: #e0e0e0;
+    --muted: #888;
+    --danger: #ef4444;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+  }
+
+  /* ── Layout ─────────────────────────────────── */
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  #workspace {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  #viewport {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    cursor: crosshair;
+    background:
+      repeating-conic-gradient(#2a2a2a 0% 25%, #1a1a1a 0% 50%)
+      0 0 / 20px 20px;
+  }
+
+  #canvas-wrap {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+  }
+
+  #imageCanvas { display: block; }
+  #maskCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+  #polygonCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+
+  #sidebar {
+    width: 200px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+  }
+
+  #statusbar {
+    padding: 3px 10px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 20px;
+  }
+
+  /* ── Drop zone ─────────────────────────────── */
+  #dropzone {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--muted);
+    pointer-events: all;
+  }
+  #dropzone.hidden { display: none; }
+  #dropzone .icon { font-size: 48px; opacity: 0.4; }
+  #dropzone p { font-size: 14px; }
+  #dropzone small { font-size: 12px; opacity: 0.6; }
+  #dropzone.drag-over { background: rgba(79,156,249,0.08); }
+
+  /* ── Toolbar buttons ────────────────────────── */
+  .sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+
+  .tb-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 5px 9px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+    transition: background 0.12s;
+  }
+  .tb-btn:hover { background: rgba(255,255,255,0.07); }
+  .tb-btn.active {
+    background: rgba(79,156,249,0.18);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .tb-btn svg { flex-shrink: 0; }
+
+  .tb-btn.danger:hover { background: rgba(239,68,68,0.15); color: var(--danger); }
+  .tb-btn.primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .tb-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+  #uploadBtn-wrap { position: relative; }
+  #fileInput { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+  /* ── Sidebar controls ───────────────────────── */
+  .ctrl-group { display: flex; flex-direction: column; gap: 6px; }
+  .ctrl-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .ctrl-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .ctrl-row span { min-width: 28px; text-align: right; font-size: 12px; color: var(--muted); }
+
+  input[type=range] {
+    flex: 1;
+    accent-color: var(--accent);
+    cursor: pointer;
+    height: 4px;
+  }
+
+  .color-swatch {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.2);
+    flex-shrink: 0;
+  }
+
+  .mode-toggle {
+    display: flex;
+    border-radius: 5px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .mode-btn {
+    flex: 1;
+    padding: 5px 0;
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    transition: background 0.12s, color 0.12s;
+  }
+  .mode-btn.active { background: var(--fg-color); color: #000; font-weight: 600; }
+  .mode-btn.active.bg { background: #374151; color: var(--text); }
+
+  .info-box {
+    background: rgba(255,255,255,0.04);
+    border-radius: 5px;
+    padding: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .info-box kbd {
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-family: monospace;
+    font-size: 10px;
+  }
+
+  /* ── Zoom indicator ─────────────────────────── */
+  #zoom-pill {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    background: rgba(0,0,0,0.65);
+    color: var(--muted);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 20px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <!-- Upload -->
+    <div id="uploadBtn-wrap" class="tb-btn" title="Open image">
+      <input type="file" id="fileInput" accept="image/*">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Open Image
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- Tools -->
+    <button class="tb-btn active" id="btn-brush" title="Brush (B)" onclick="setTool('brush')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+      Brush
+    </button>
+    <button class="tb-btn" id="btn-eraser" title="Eraser (E)" onclick="setTool('eraser')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16l13-13 7 7-2.5 2.5"/><path d="M6 17l7-7"/></svg>
+      Eraser
+    </button>
+    <button class="tb-btn" id="btn-polygon" title="Polygon (P)" onclick="setTool('polygon')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 9 18 21 6 21 2 9"/></svg>
+      Polygon
+    </button>
+    <button class="tb-btn" id="btn-fill" title="Flood Fill (F)" onclick="setTool('fill')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 11l-8-8-8.5 8.5a5.5 5.5 0 0 0 7.78 7.78L19 11z"/><path d="M20 16s1 1 1 2-1 2-1 2"/></svg>
+      Fill
+    </button>
+
+    <div class="sep"></div>
+
+    <button class="tb-btn" title="Undo (Ctrl+Z)" onclick="undo()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+      Undo
+    </button>
+    <button class="tb-btn" title="Redo (Ctrl+Shift+Z)" onclick="redo()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+      Redo
+    </button>
+
+    <div class="sep"></div>
+
+    <button class="tb-btn" title="Toggle mask visibility (V)" onclick="toggleMask()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="visIcon"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Mask
+    </button>
+    <button class="tb-btn danger" title="Clear mask" onclick="clearMask()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Clear
+    </button>
+
+    <div class="sep"></div>
+
+    <button class="tb-btn primary" title="Export mask as B&amp;W JPEG" onclick="exportMask()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Mask
+    </button>
+  </div>
+
+  <!-- Workspace -->
+  <div id="workspace">
+    <div id="viewport">
+      <!-- Drop zone -->
+      <div id="dropzone">
+        <div class="icon">🖼️</div>
+        <p>Open an image to start annotating</p>
+        <small>Drag &amp; drop a JPG/PNG here, or click <strong>Open Image</strong></small>
+      </div>
+
+      <!-- Canvas container (zoom/pan via CSS transform) -->
+      <div id="canvas-wrap">
+        <canvas id="imageCanvas"></canvas>
+        <canvas id="maskCanvas"></canvas>
+        <canvas id="polygonCanvas"></canvas>
+      </div>
+
+      <div id="zoom-pill">100%</div>
+    </div>
+
+    <!-- Sidebar -->
+    <div id="sidebar">
+      <div class="ctrl-group">
+        <div class="ctrl-label">Paint Mode</div>
+        <div class="mode-toggle">
+          <button class="mode-btn active" id="btn-fg" onclick="setMode('fg')">Foreground</button>
+          <button class="mode-btn" id="btn-bg" onclick="setMode('bg')">Background</button>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-label">Brush Size</div>
+        <div class="ctrl-row">
+          <input type="range" id="brushSize" min="1" max="120" value="20" oninput="updateBrushSize(this.value)">
+          <span id="brushSizeVal">20</span>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-label">Mask Opacity</div>
+        <div class="ctrl-row">
+          <input type="range" id="opacity" min="0" max="100" value="55" oninput="updateOpacity(this.value)">
+          <span id="opacityVal">55%</span>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-label">Legend</div>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+          <div style="display:flex;align-items:center;gap:7px;font-size:12px;">
+            <div class="color-swatch" style="background:#22c55e;"></div>
+            Foreground → white
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;font-size:12px;">
+            <div class="color-swatch" style="background:#374151;border-color:#555;"></div>
+            Background → black
+          </div>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-label">Shortcuts</div>
+        <div class="info-box">
+          <kbd>B</kbd> Brush &nbsp; <kbd>E</kbd> Eraser<br>
+          <kbd>P</kbd> Polygon &nbsp; <kbd>F</kbd> Fill<br>
+          <kbd>V</kbd> Toggle mask<br>
+          <kbd>Ctrl+Z</kbd> Undo<br>
+          <kbd>Ctrl+Y</kbd> Redo<br>
+          <kbd>Scroll</kbd> Zoom<br>
+          <kbd>Space+drag</kbd> Pan<br>
+          <kbd>0</kbd> Reset view<br>
+          <kbd>Enter</kbd> Close polygon<br>
+          <kbd>Esc</kbd> Cancel polygon
+        </div>
+      </div>
+
+      <div class="ctrl-group" id="imageInfo" style="display:none;">
+        <div class="ctrl-label">Image</div>
+        <div class="info-box" id="imageInfoText"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="statusbar">
+    <span id="statusTool">No image loaded</span>
+    <span id="statusPos"></span>
+    <span id="statusUndo"></span>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────
+const state = {
+  tool: 'brush',
+  mode: 'fg',          // 'fg' | 'bg'
+  brushSize: 20,
+  opacity: 0.55,
+  maskVisible: true,
+  isDrawing: false,
+  lastX: 0, lastY: 0,
+  scale: 1,
+  panX: 0, panY: 0,
+  isPanning: false,
+  panStartX: 0, panStartY: 0,
+  isSpaceDown: false,
+  imgW: 0, imgH: 0,
+  imgName: '',
+  polygonPts: [],
+  undoStack: [],
+  redoStack: [],
+  hasImage: false,
+};
+
+// ── DOM refs ──────────────────────────────────────────────────────────────
+const viewport     = document.getElementById('viewport');
+const canvasWrap   = document.getElementById('canvas-wrap');
+const imageCanvas  = document.getElementById('imageCanvas');
+const maskCanvas   = document.getElementById('maskCanvas');
+const polyCanvas   = document.getElementById('polygonCanvas');
+const imageCtx     = imageCanvas.getContext('2d');
+const maskCtx      = maskCanvas.getContext('2d', { willReadFrequently: true });
+const polyCtx      = polyCanvas.getContext('2d');
+const dropzone     = document.getElementById('dropzone');
+const zoomPill     = document.getElementById('zoom-pill');
+const statusTool   = document.getElementById('statusTool');
+const statusPos    = document.getElementById('statusPos');
+const statusUndo   = document.getElementById('statusUndo');
+const fileInput    = document.getElementById('fileInput');
+
+// ── Colors ────────────────────────────────────────────────────────────────
+const FG_COLOR = 'rgba(34, 197, 94, 0.75)';   // green
+const BG_COLOR = 'rgba(55, 65, 81, 0.80)';    // dark blue-grey
+
+function paintColor() { return state.mode === 'fg' ? FG_COLOR : BG_COLOR; }
+
+// ── Init ──────────────────────────────────────────────────────────────────
+function initCanvases(w, h) {
+  [imageCanvas, maskCanvas, polyCanvas].forEach(c => {
+    c.width = w; c.height = h;
+  });
+  state.imgW = w; state.imgH = h;
+
+  maskCtx.clearRect(0, 0, w, h);
+  polyCtx.clearRect(0, 0, w, h);
+  state.undoStack = [];
+  state.redoStack = [];
+  updateUndoStatus();
+  fitToView();
+  updateTransform();
+}
+
+function fitToView() {
+  const vw = viewport.clientWidth - 20;
+  const vh = viewport.clientHeight - 20;
+  const scale = Math.min(vw / state.imgW, vh / state.imgH, 1);
+  state.scale = scale;
+  state.panX = (viewport.clientWidth - state.imgW * scale) / 2;
+  state.panY = (viewport.clientHeight - state.imgH * scale) / 2;
+}
+
+// ── Upload ────────────────────────────────────────────────────────────────
+async function loadFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const res = await fetch('/upload', { method: 'POST', body: fd });
+  if (!res.ok) { alert('Upload failed'); return; }
+
+  const data = await res.json();
+  state.imgName = data.name.replace(/\.[^.]+$/, '');
+  state.hasImage = true;
+
+  const img = new Image();
+  img.onload = () => {
+    initCanvases(data.w, data.h);
+    imageCtx.drawImage(img, 0, 0);
+    dropzone.classList.add('hidden');
+
+    document.getElementById('imageInfo').style.display = '';
+    document.getElementById('imageInfoText').textContent =
+      `${data.name}\n${data.w} × ${data.h} px`;
+    statusTool.textContent = `Loaded: ${data.name}`;
+  };
+  img.src = data.src;
+}
+
+fileInput.addEventListener('change', e => loadFile(e.target.files[0]));
+
+// Drag & drop on viewport
+viewport.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+viewport.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+viewport.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  loadFile(e.dataTransfer.files[0]);
+});
+
+// ── Transform ─────────────────────────────────────────────────────────────
+function updateTransform() {
+  canvasWrap.style.transform = `translate(${state.panX}px,${state.panY}px) scale(${state.scale})`;
+  canvasWrap.style.transformOrigin = '0 0';
+  maskCanvas.style.opacity = state.maskVisible ? state.opacity : 0;
+  zoomPill.textContent = Math.round(state.scale * 100) + '%';
+}
+
+// ── Tool selection ─────────────────────────────────────────────────────────
+function setTool(tool) {
+  if (state.tool === 'polygon' && tool !== 'polygon') cancelPolygon();
+  state.tool = tool;
+  ['brush','eraser','polygon','fill'].forEach(t => {
+    document.getElementById('btn-'+t).classList.toggle('active', t === tool);
+  });
+  viewport.style.cursor = tool === 'polygon' ? 'crosshair' :
+                          tool === 'fill'    ? 'cell' :
+                          tool === 'eraser'  ? 'none' : 'crosshair';
+  statusTool.textContent = { brush:'Brush', eraser:'Eraser', polygon:'Polygon (Enter to close)', fill:'Flood Fill' }[tool];
+}
+
+function setMode(m) {
+  state.mode = m;
+  document.getElementById('btn-fg').classList.toggle('active', m === 'fg');
+  document.getElementById('btn-bg').classList.toggle('active', m === 'bg');
+  document.getElementById('btn-bg').classList.toggle('bg', m === 'bg');
+}
+
+function updateBrushSize(v) {
+  state.brushSize = +v;
+  document.getElementById('brushSizeVal').textContent = v;
+}
+
+function updateOpacity(v) {
+  state.opacity = v / 100;
+  document.getElementById('opacityVal').textContent = v + '%';
+  updateTransform();
+}
+
+function toggleMask() {
+  state.maskVisible = !state.maskVisible;
+  updateTransform();
+}
+
+// ── Coordinate helpers ────────────────────────────────────────────────────
+// Events land on polyCanvas (topmost), convert to image coords
+function eventToImage(e) {
+  const rect = polyCanvas.getBoundingClientRect();
+  // Because of CSS scale, clientX relative to the element's visual position
+  // must be divided by CSS scale to get canvas coords
+  return {
+    x: (e.clientX - rect.left) / state.scale,
+    y: (e.clientY - rect.top)  / state.scale,
+  };
+}
+
+// ── Mouse / touch on the canvas area ─────────────────────────────────────
+// Use polyCanvas as the event target (sits on top)
+polyCanvas.style.pointerEvents = 'all';
+maskCanvas.style.pointerEvents = 'none';
+imageCanvas.style.pointerEvents = 'none';
+
+polyCanvas.addEventListener('mousedown', onDown);
+polyCanvas.addEventListener('mousemove', onMove);
+polyCanvas.addEventListener('mouseup', onUp);
+polyCanvas.addEventListener('dblclick', onDblClick);
+polyCanvas.addEventListener('contextmenu', e => { e.preventDefault(); cancelPolygon(); });
+
+viewport.addEventListener('mousedown', onViewportDown);
+viewport.addEventListener('mousemove', onViewportMove);
+viewport.addEventListener('mouseup', onViewportUp);
+viewport.addEventListener('wheel', onWheel, { passive: false });
+
+function onDown(e) {
+  if (e.button !== 0) return;
+  if (!state.hasImage) return;
+  if (state.isSpaceDown) return; // panning mode
+
+  const { x, y } = eventToImage(e);
+
+  if (state.tool === 'polygon') {
+    handlePolygonClick(x, y, e.shiftKey);
+    return;
+  }
+  if (state.tool === 'fill') {
+    saveState();
+    floodFill(Math.round(x), Math.round(y));
+    return;
+  }
+  saveState();
+  state.isDrawing = true;
+  state.lastX = x; state.lastY = y;
+  maskCtx.save();
+  applyBrushStyle();
+  maskCtx.beginPath();
+  maskCtx.arc(x, y, state.brushSize / 2, 0, Math.PI * 2);
+  maskCtx.fill();
+  maskCtx.beginPath();
+  maskCtx.moveTo(x, y);
+}
+
+function onMove(e) {
+  const { x, y } = eventToImage(e);
+  statusPos.textContent = `${Math.round(x)}, ${Math.round(y)}`;
+
+  if (state.tool === 'polygon') {
+    drawPolygonPreview(x, y);
+    return;
+  }
+  if (!state.isDrawing) return;
+
+  maskCtx.lineTo(x, y);
+  maskCtx.stroke();
+  maskCtx.beginPath();
+  maskCtx.moveTo(x, y);
+  state.lastX = x; state.lastY = y;
+}
+
+function onUp(e) {
+  if (!state.isDrawing) return;
+  maskCtx.restore();
+  state.isDrawing = false;
+}
+
+function onDblClick(e) {
+  if (state.tool === 'polygon' && state.polygonPts.length >= 2) {
+    closePolygon();
+  }
+}
+
+function applyBrushStyle() {
+  const r = state.brushSize / 2;
+  if (state.tool === 'eraser') {
+    maskCtx.globalCompositeOperation = 'destination-out';
+    maskCtx.strokeStyle = 'rgba(0,0,0,1)';
+    maskCtx.fillStyle = 'rgba(0,0,0,1)';
+  } else {
+    maskCtx.globalCompositeOperation = 'source-over';
+    maskCtx.strokeStyle = paintColor();
+    maskCtx.fillStyle = paintColor();
+  }
+  maskCtx.lineWidth = state.brushSize;
+  maskCtx.lineCap = 'round';
+  maskCtx.lineJoin = 'round';
+}
+
+// ── Polygon tool ─────────────────────────────────────────────────────────
+function handlePolygonClick(x, y, _shift) {
+  const pts = state.polygonPts;
+  // Click near first point to close
+  if (pts.length >= 3) {
+    const dx = x - pts[0].x, dy = y - pts[0].y;
+    if (Math.sqrt(dx*dx + dy*dy) < 10 / state.scale) {
+      closePolygon(); return;
+    }
+  }
+  pts.push({ x, y });
+  drawPolygonPreview(x, y);
+}
+
+function drawPolygonPreview(mx, my) {
+  const pts = state.polygonPts;
+  const w = state.imgW, h = state.imgH;
+  polyCtx.clearRect(0, 0, w, h);
+  if (pts.length === 0) return;
+
+  const color = state.mode === 'fg' ? '#22c55e' : '#6b7280';
+
+  // Fill preview
+  if (pts.length >= 2) {
+    polyCtx.beginPath();
+    polyCtx.moveTo(pts[0].x, pts[0].y);
+    pts.slice(1).forEach(p => polyCtx.lineTo(p.x, p.y));
+    if (mx !== undefined) polyCtx.lineTo(mx, my);
+    polyCtx.closePath();
+    polyCtx.fillStyle = color.replace(')', ',0.2)').replace('rgb', 'rgba');
+    polyCtx.fill();
+  }
+
+  // Edges
+  polyCtx.beginPath();
+  polyCtx.moveTo(pts[0].x, pts[0].y);
+  pts.slice(1).forEach(p => polyCtx.lineTo(p.x, p.y));
+  if (mx !== undefined) polyCtx.lineTo(mx, my);
+  polyCtx.strokeStyle = color;
+  polyCtx.lineWidth = 1.5 / state.scale;
+  polyCtx.setLineDash([4 / state.scale, 4 / state.scale]);
+  polyCtx.stroke();
+  polyCtx.setLineDash([]);
+
+  // Vertices
+  pts.forEach((p, i) => {
+    polyCtx.beginPath();
+    polyCtx.arc(p.x, p.y, (i === 0 && pts.length >= 3 ? 6 : 4) / state.scale, 0, Math.PI * 2);
+    polyCtx.fillStyle = i === 0 ? '#fff' : color;
+    polyCtx.fill();
+    polyCtx.strokeStyle = color;
+    polyCtx.lineWidth = 1.5 / state.scale;
+    polyCtx.stroke();
+  });
+}
+
+function closePolygon() {
+  const pts = state.polygonPts;
+  if (pts.length < 3) { cancelPolygon(); return; }
+  saveState();
+  maskCtx.save();
+  maskCtx.globalCompositeOperation = state.tool === 'eraser' ? 'destination-out' : 'source-over';
+  maskCtx.beginPath();
+  maskCtx.moveTo(pts[0].x, pts[0].y);
+  pts.slice(1).forEach(p => maskCtx.lineTo(p.x, p.y));
+  maskCtx.closePath();
+  maskCtx.fillStyle = paintColor();
+  maskCtx.fill();
+  maskCtx.restore();
+  cancelPolygon();
+}
+
+function cancelPolygon() {
+  state.polygonPts = [];
+  polyCtx.clearRect(0, 0, state.imgW, state.imgH);
+}
+
+// ── Flood fill ────────────────────────────────────────────────────────────
+function floodFill(startX, startY) {
+  if (startX < 0 || startY < 0 || startX >= state.imgW || startY >= state.imgH) return;
+
+  const w = state.imgW, h = state.imgH;
+  const imgData = maskCtx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+
+  // Target: the current pixel's color class
+  const idx = (startY * w + startX) * 4;
+  const tR = d[idx], tG = d[idx+1], tB = d[idx+2], tA = d[idx+3];
+
+  // Fill color based on mode
+  const fillRGBA = state.mode === 'fg'
+    ? [34, 197, 94, Math.round(0.75 * 255)]
+    : [55, 65,  81, Math.round(0.80 * 255)];
+
+  // If same color class, nothing to do
+  if (sameClass(tR, tG, tB, tA, fillRGBA)) return;
+
+  const stack = [[startX, startY]];
+  const visited = new Uint8Array(w * h);
+
+  while (stack.length > 0) {
+    const [x, y] = stack.pop();
+    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+    const i = y * w + x;
+    if (visited[i]) continue;
+    const pi = i * 4;
+    if (!sameClass(d[pi], d[pi+1], d[pi+2], d[pi+3], [tR, tG, tB, tA])) continue;
+    visited[i] = 1;
+    d[pi]   = fillRGBA[0];
+    d[pi+1] = fillRGBA[1];
+    d[pi+2] = fillRGBA[2];
+    d[pi+3] = fillRGBA[3];
+    stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
+  }
+  maskCtx.putImageData(imgData, 0, 0);
+}
+
+function sameClass(r, g, b, a, [tr, tg, tb, ta]) {
+  // Compare by "foreground / background / empty" class rather than exact color
+  const isA = a < 20;   // transparent = empty
+  const isT = ta < 20;
+  if (isA && isT) return true;
+  if (isA !== isT) return false;
+  // Compare green channel as fg/bg discriminator
+  return (g > 100) === (tg > 100);
+}
+
+// ── Undo / Redo ───────────────────────────────────────────────────────────
+const MAX_UNDO = 20;
+
+function saveState() {
+  const snap = maskCtx.getImageData(0, 0, state.imgW, state.imgH);
+  state.undoStack.push(snap);
+  state.redoStack = [];
+  if (state.undoStack.length > MAX_UNDO) state.undoStack.shift();
+  updateUndoStatus();
+}
+
+function undo() {
+  if (!state.undoStack.length) return;
+  state.redoStack.push(maskCtx.getImageData(0, 0, state.imgW, state.imgH));
+  maskCtx.putImageData(state.undoStack.pop(), 0, 0);
+  updateUndoStatus();
+}
+
+function redo() {
+  if (!state.redoStack.length) return;
+  state.undoStack.push(maskCtx.getImageData(0, 0, state.imgW, state.imgH));
+  maskCtx.putImageData(state.redoStack.pop(), 0, 0);
+  updateUndoStatus();
+}
+
+function updateUndoStatus() {
+  statusUndo.textContent = `Undo: ${state.undoStack.length}  Redo: ${state.redoStack.length}`;
+}
+
+// ── Clear mask ────────────────────────────────────────────────────────────
+function clearMask() {
+  if (!state.hasImage) return;
+  if (!confirm('Clear the entire mask?')) return;
+  saveState();
+  maskCtx.clearRect(0, 0, state.imgW, state.imgH);
+}
+
+// ── Export mask ───────────────────────────────────────────────────────────
+async function exportMask() {
+  if (!state.hasImage) { alert('Load an image first.'); return; }
+
+  // Build binary B&W mask from the annotation layer
+  const w = state.imgW, h = state.imgH;
+  const src = maskCtx.getImageData(0, 0, w, h);
+
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = w; outCanvas.height = h;
+  const outCtx = outCanvas.getContext('2d');
+  const outData = outCtx.createImageData(w, h);
+
+  for (let i = 0; i < src.data.length; i += 4) {
+    const a = src.data[i + 3];
+    const g = src.data[i + 1];
+    const isFg = a > 20 && g > 100;   // green-ish = foreground
+    const v = isFg ? 255 : 0;
+    outData.data[i]   = v;
+    outData.data[i+1] = v;
+    outData.data[i+2] = v;
+    outData.data[i+3] = 255;
+  }
+  outCtx.putImageData(outData, 0, 0);
+
+  // Send PNG to server → get back thresholded JPEG
+  const maskPng = outCanvas.toDataURL('image/png');
+  const res = await fetch('/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mask: maskPng, filename: state.imgName }),
+  });
+  if (!res.ok) { alert('Export failed'); return; }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (state.imgName || 'image') + '_mask.jpg';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Pan & zoom ────────────────────────────────────────────────────────────
+function onViewportDown(e) {
+  if (e.button === 1 || (e.button === 0 && state.isSpaceDown)) {
+    state.isPanning = true;
+    state.panStartX = e.clientX - state.panX;
+    state.panStartY = e.clientY - state.panY;
+    viewport.style.cursor = 'grabbing';
+    e.preventDefault();
+  }
+}
+
+function onViewportMove(e) {
+  if (!state.isPanning) return;
+  state.panX = e.clientX - state.panStartX;
+  state.panY = e.clientY - state.panStartY;
+  updateTransform();
+}
+
+function onViewportUp() {
+  if (state.isPanning) {
+    state.isPanning = false;
+    viewport.style.cursor = state.isSpaceDown ? 'grab' : 'crosshair';
+  }
+}
+
+function onWheel(e) {
+  e.preventDefault();
+  const rect = viewport.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const factor = e.deltaY < 0 ? 1.15 : 0.87;
+  const newScale = Math.max(0.05, Math.min(state.scale * factor, 40));
+
+  state.panX = mx - (mx - state.panX) * (newScale / state.scale);
+  state.panY = my - (my - state.panY) * (newScale / state.scale);
+  state.scale = newScale;
+  updateTransform();
+}
+
+// ── Keyboard ──────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  const ctrl = e.ctrlKey || e.metaKey;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    state.isSpaceDown = true;
+    viewport.style.cursor = 'grab';
+  }
+  if (ctrl && e.key === 'z') { e.preventDefault(); undo(); return; }
+  if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); redo(); return; }
+
+  switch (e.key.toLowerCase()) {
+    case 'b': setTool('brush');   break;
+    case 'e': setTool('eraser');  break;
+    case 'p': setTool('polygon'); break;
+    case 'f': setTool('fill');    break;
+    case 'v': toggleMask();       break;
+    case '0': fitToView(); updateTransform(); break;
+    case 'enter':
+      if (state.tool === 'polygon') closePolygon();
+      break;
+    case 'escape':
+      if (state.tool === 'polygon') cancelPolygon();
+      break;
+  }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space') {
+    state.isSpaceDown = false;
+    viewport.style.cursor = 'crosshair';
+  }
+});
+</script>
+</body>
+</html>
