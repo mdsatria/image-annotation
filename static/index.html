@@ -324,8 +324,8 @@
       <div class="ctrl-group">
         <div class="ctrl-label">Brush Size</div>
         <div class="ctrl-row">
-          <input type="range" id="brushSize" min="1" max="120" value="20" oninput="updateBrushSize(this.value)">
-          <span id="brushSizeVal">20</span>
+          <input type="range" id="brushSize" min="1" max="120" value="10" oninput="updateBrushSize(this.value)">
+          <span id="brushSizeVal">10</span>
         </div>
       </div>
 
@@ -387,7 +387,7 @@
 const state = {
   tool: 'brush',
   mode: 'fg',          // 'fg' | 'bg'
-  brushSize: 20,
+  brushSize: 10,
   opacity: 0.55,
   maskVisible: true,
   isDrawing: false,
