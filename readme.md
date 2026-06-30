@@ -1,3 +1,3 @@
 uv run uvicorn main:app --reload
 
-buka  http://localhost:8000
+http://localhost:8000

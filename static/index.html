@@ -823,6 +823,42 @@ async function exportMask() {
     outData.data[i+2] = v;
     outData.data[i+3] = 255;
   }
+
+  // Fill holes: black pixels not reachable from the image border are enclosed
+  // by white (foreground) and should be white too.
+  const d = outData.data;
+  const reached = new Uint8Array(w * h);
+  const hstack = [];
+
+  for (let x = 0; x < w; x++) {
+    for (const y of [0, h - 1]) {
+      const i = y * w + x;
+      if (d[i * 4] === 0 && !reached[i]) { reached[i] = 1; hstack.push(i); }
+    }
+  }
+  for (let y = 1; y < h - 1; y++) {
+    for (const x of [0, w - 1]) {
+      const i = y * w + x;
+      if (d[i * 4] === 0 && !reached[i]) { reached[i] = 1; hstack.push(i); }
+    }
+  }
+  while (hstack.length > 0) {
+    const ci = hstack.pop();
+    const cx = ci % w, cy = (ci / w) | 0;
+    for (const [nx, ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]) {
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+      const ni = ny * w + nx;
+      if (reached[ni] || d[ni * 4] !== 0) continue;
+      reached[ni] = 1;
+      hstack.push(ni);
+    }
+  }
+  for (let i = 0; i < w * h; i++) {
+    if (d[i * 4] === 0 && !reached[i]) {
+      d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 255;
+    }
+  }
+
   outCtx.putImageData(outData, 0, 0);
 
   // Send PNG to server → get back thresholded JPEG
